@@ -1,0 +1,8 @@
+---
+title: "Predictive Text Suggestions Using R"
+author: "CMLPR"
+date: "March 19, 2016"
+output: html_document
+---
+
+Initial R Markdown document. 
