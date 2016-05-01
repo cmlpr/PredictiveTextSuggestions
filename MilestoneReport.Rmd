@@ -1,8 +1,216 @@
 ---
-title: "Milestone Report"
+title: "Milestone Report for Predictive Text Suggestions"
 author: "CMLPR"
 date: "March 19, 2016"
 output: html_document
 ---
 
-This is an R Markdown document for Milestone Report..
+# Objectives 
+
+The goal of this project is to build an application for predictive text suggestions using R and RStudio's Shiny Server. This application will perform a similar functionality as Swiftkey and IMessage. When the user starts typing letters and words in a text box, it will suggest a full word or the next word. This goal will be achieved by building predictive text models using Natural Language Processing (NLP) methods. 
+
+This report will provide an initial summary of the achievements on:
+
+1. Data used to train models
+2. Sampling method
+3. Data cleaning
+4. Data exploration
+5. Next Steps
+
+## Load Packages
+
+```{r, cache = TRUE, warning = FALSE, message = FALSE}
+library(stringi)
+library(knitr)
+library(tm)
+library(RWeka)
+library(wordcloud)
+library(SnowballC)
+library(doParallel)
+```
+
+# Data Files
+
+Basic data used in this project is obtained from http://www.corpora.heliohost.org/. This large corpora is a collection put together from many different type of sources, such as newspapers, magazines, blogs and Twitter. Specific version of the dataset is downloaded from this [link](https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip) (~575 Mb).
+
+```{r, cache=TRUE, warning=FALSE}
+
+rm(list=ls())
+setwd("~/Documents/Learning/Coursera/DataScienceSpecialization/Capstone/")
+
+blogCon = "Data/final/en_US/en_US.blogs.txt"
+newsCon = "Data/final/en_US/en_US.news.txt"
+twitCon = "Data/final/en_US/en_US.twitter.txt"
+
+blogDf <- readLines(con = blogCon, encoding = "UTF-8")
+newsDf<- readLines(con = newsCon, encoding = "UTF-8")
+twitDf <- readLines(con = twitCon, encoding = "UTF-8")
+
+```
+
+```{r, echo=FALSE, eval=FALSE}
+save(blogDf, newsDf, twitDf, file="dateSets.RData")
+load(file="dateSets.RData")
+```
+
+## Basic Dataset Statistics
+
+```{r, cache = TRUE}
+
+getDSum <- function(data, conn) {
+  summ <- c(file.info(conn)[1]$size/1024.0/1024.0, 
+                      length(data),
+                      sum(sapply(gregexpr("\\W+", data), length) + 1),
+                      max(stri_length(data)))
+  return (summ)
+}
+
+res <- as.data.frame(mapply(getDSum, list(blogDf, newsDf, twitDf), list(blogCon, newsCon, twitCon)))
+colnames(res) <- c("Blogs", "News", "Twit")
+rownames(res) <- c("Size(mb)", "RowCount", "WordCount", "MaxSize")
+kable(res)
+```
+
+# Sampling Method
+
+The next step is to perform exploratory analysis to understand the dataset and prepare for a predictive model. In this step large dataset can slow the process as the main goal is to perform quick & dirty analysis to get familiar with the overall process. A sampling method can be applied to decrease the data size while preservig the structure and characteristics of data.
+
+```{r, cache = TRUE}
+
+dataSample <- function(data, pct) {
+  # Returns a specified percentage of data rows using coin toss
+  # arg1: data frame
+  # arg2: desired percentage
+  sampleRows <- rbinom(length(data), size = 1, prob = pct/100.0)
+  return(data[sampleRows==1])
+}
+
+set.seed(1234)
+blogDf2 <- dataSample(blogDf, 0.1)
+newsDf2 <- dataSample(newsDf, 0.1)
+twitDf2 <- dataSample(twitDf, 0.1)
+```
+
+```{r, echo=FALSE, eval=FALSE}
+save(blogDf2, newsDf2, twitDf2, file="sampleSets.RData")
+rm(blogDf, newsDf, twitDf)
+load(file="sampleSets.RData")
+```
+
+# Data Cleaning
+
+After taking sample of data, one can combine them and pass them through filters to get ready for further processing. This process is very critical as predictive model's performance is highly dependant on clean version of data. Steps in this process are as follows:
+
+* Convert everything to ASCII encoding
+* Remove some characters like: "@", "\", "/", "//"
+* Convert all letters to lower case
+* Remove numbers
+* Remove punctuation
+* Remove stopwords
+* Remove profanities
+* Stem the words
+* Remove white space
+
+```{r, echo = TRUE, cache = TRUE}
+# Merge data frames
+mergedData <- c(blogDf2, newsDf2, twitDf2)
+
+# Make sure the encoding is right
+mergedData <- unlist(lapply(mergedData, function(row) iconv(row, to = "UTF-8", sub = "")))
+
+# Construct corpus from the merged data
+corpus <- VCorpus(VectorSource(mergedData))
+
+```
+
+```{r, echo=FALSE, eval=FALSE}
+save(corpus, file="corpus1.RData")
+load(file="corpus1.RData")
+```
+
+```{r, echo = TRUE, cache = TRUE}
+removeSpecialChars <- content_transformer(function(x, pattern) gsub(pattern, " ", x))
+corpus <- tm_map(corpus, removeSpecialChars, "@|\\|/|//")
+corpus <- tm_map(corpus, content_transformer(tolower))
+corpus <- tm_map(corpus, removeNumbers)
+corpus <- tm_map(corpus, removePunctuation)
+corpus <- tm_map(corpus, removeWords, stopwords("english"))
+#corpus <- tm_map(corpus, removeWords, profanities)
+corpus <- tm_map(corpus, stemDocument)
+corpus <- tm_map(corpus, stripWhitespace)
+corpus <- tm_map(corpus, PlainTextDocument)
+```
+
+```{r, echo=FALSE, eval=FALSE}
+save(corpus, file="corpus2.RData")
+load(file="corpus2.RData")
+```
+
+# Data Exploration
+
+The easiest exploration method is to use the popular word clouds. 
+
+```{r, echo = TRUE, eval = TRUE, cache = TRUE}
+wordcloud(corpus, max.words = 100, random.order = FALSE, rot.per = 0.35, use.r.layout=FALSE, colors = brewer.pal(8, "Dark2"), scale=c(3,1))
+```
+
+In this step the corpus created previously will be used to create term document matrices using different tokenization strategies. 
+
+```{r, echo = TRUE, cache = TRUE}
+
+# Tokenization functions using RWeka package
+uniGramToken <- function(x) NGramTokenizer(x, Weka_control(min=1, max=1))
+biGramToken <- function(x) NGramTokenizer(x, Weka_control(min=2, max=2))
+triGramToken <- function(x) NGramTokenizer(x, Weka_control(min=3, max=3))
+
+# Function that returns desired number of most frequent words, word pairs
+getHighFreqItems <- function(tdm, nbr) {
+  res <- as.data.frame(sort(rowSums(as.matrix(tdm)), decreasing = TRUE)[1:nbr])
+  colnames(res) <- "Freq"
+  return(res)
+}
+''
+```
+
+Top 20 most common unigrams
+
+```{r, echo = TRUE, cache = TRUE, warning = FALSE, message = FALSE}
+# Single words
+one_tdm <- TermDocumentMatrix(corpus, control=list(tokenize=uniGramToken))
+one_tdm <- removeSparseTerms(one_tdm, 0.99)
+single_words <- getHighFreqItems(one_tdm, 20)
+
+barplot(single_words$Freq, names.arg = rownames(single_words), las = 2,
+        main="Frequency Plot - Unigrams",ylab="Freqency",xlab="Word")
+
+```
+
+Top 20 most common bigrams
+
+```{r, echo = TRUE, cache = TRUE, warning = FALSE, message = FALSE}
+# Bi-Gram
+bi_tdm <- TermDocumentMatrix(corpus, control=list(tokenize=biGramToken))
+bi_tdm <- removeSparseTerms(bi_tdm, 0.999)
+double_words <- getHighFreqItems(bi_tdm, 20)
+
+barplot(double_words$Freq, names.arg = rownames(double_words), las = 2,
+        main="Frequency Plot - Bigrams",ylab="Freqency",xlab="Word")
+
+```
+
+Top 20 most common trigrams
+
+```{r, echo = TRUE, cache = TRUE, warning = FALSE, message = FALSE}
+# Tri-Gram
+tri_tdm <- TermDocumentMatrix(corpus, control=list(tokenize=triGramToken))
+tri_tdm <- removeSparseTerms(tri_tdm, 0.9999)
+tri_words <- getHighFreqItems(tri_tdm, 20)
+par(mar = c(9,4,4,2) + 0.1)
+barplot(tri_words$Freq, names.arg = rownames(tri_words), las = 2,
+        main="Frequency Plot - Trigrams",ylab="Freqency",xlab="Word")
+
+```
+
+# Conclusion and Next Steps
+
+A first pass data analysis has been completed on corpus dataset. Cleaning and tokenization are achieved by `tm` and `RWeka` packages.  A small portion of dataset has been used in this study. Next step will include improving the performance of the current pre-processes and applying various predictive models on the final pre-processed data. 
