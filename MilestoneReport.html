@@ -268,9 +268,7 @@ getHighFreqItems &lt;- function(tdm, nbr) {
   res &lt;- as.data.frame(sort(rowSums(as.matrix(tdm)), decreasing = TRUE)[1:nbr])
   colnames(res) &lt;- &quot;Freq&quot;
   return(res)
-}
-''</code></pre>
-<pre><code>## [1] &quot;&quot;</code></pre>
+}</code></pre>
 <p>Top 20 most common unigrams</p>
 <pre class="r"><code># Single words
 one_tdm &lt;- TermDocumentMatrix(corpus, control=list(tokenize=uniGramToken))

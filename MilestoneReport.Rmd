@@ -169,7 +169,6 @@ getHighFreqItems <- function(tdm, nbr) {
   colnames(res) <- "Freq"
   return(res)
 }
-''
 ```
 
 Top 20 most common unigrams
